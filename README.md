@@ -1,2 +1,0 @@
-# Henkel-PO
-Henkel
