@@ -1163,25 +1163,37 @@ function processEkbe(raw) {
     "Criação PO": parseDate(row["Criação PO"])
   }));
 
-  // DN Real e GR Real por PO+Item+Quantidade (Hist. Cat. L = DN, E = GR)
-  // Chave inclui Quantidade para evitar espelhar data de um lote em outro que ainda não teve GR lançado
-  const dnMap = {}, grMap = {};
+  // ── Mapas de datas reais ─────────────────────────────────────────────────
+  // Chave: PO | Item | Mat.Doc. (= Delivery/DN — ainda não renomeado aqui)
+  // NOTA: Mat. Doc. só é renomeado para "Delivery (DN) Atual" APÓS os filtros.
+  // Usar o nome original garante que a chave bata corretamente no lookup.
+  //
+  // Hist. Cat.:
+  //   "L"  → DN Real  (delivery note)
+  //   "E"  → GR Real  (goods receipt)
+  //   "WA" ou Movmt type "601" → GI Real (goods issue)
+
+  const dnMap = {}, grMap = {}, giMap = {};
   df.forEach(row => {
-    const qty = toNum(row["Quantidade"]);
-    const k = `${row["Doc. Compra (PO)"]}|${row["Item"]}|${qty}`;
-    const cat = row["Hist. Cat."] ? String(row["Hist. Cat."]).trim() : '';
-    const d = row["Pstng Date"];
-    if (cat === 'L' && d) { if (!dnMap[k] || d < dnMap[k]) dnMap[k] = d; }
-    if (cat === 'E' && d) { if (!grMap[k] || d < grMap[k]) grMap[k] = d; }
+    const dn  = String(row["Mat. Doc."] || '').trim();
+    const k   = `${row["Doc. Compra (PO)"]}|${row["Item"]}|${dn}`;
+    const cat = String(row["Hist. Cat."] || '').trim();
+    const mv  = String(row["Movmt type"] || '').trim();
+    const d   = row["Pstng Date"];
+    if (!d) return;
+    if (cat === 'L')                 { if (!dnMap[k] || d < dnMap[k]) dnMap[k] = d; }
+    if (cat === 'E')                 { if (!grMap[k] || d < grMap[k]) grMap[k] = d; }
+    if (cat === 'WA' || mv === '601'){ if (!giMap[k] || d < giMap[k]) giMap[k] = d; }
   });
 
   df = df.map(row => {
-    const qty = toNum(row["Quantidade"]);
-    const k = `${row["Doc. Compra (PO)"]}|${row["Item"]}|${qty}`;
+    const dn = String(row["Mat. Doc."] || '').trim();
+    const k  = `${row["Doc. Compra (PO)"]}|${row["Item"]}|${dn}`;
     return {
       ...row,
       "DN Real": dnMap[k] ? fmtDate(dnMap[k]) : null,
-      "GR Real": grMap[k] ? fmtDate(grMap[k]) : null
+      "GR Real": grMap[k] ? fmtDate(grMap[k]) : null,
+      "GI Real": giMap[k] ? fmtDate(giMap[k]) : null
     };
   });
 
@@ -1258,9 +1270,6 @@ function processEkbe(raw) {
 
   // Delivery (DN) Primeiro
   df = df.map(row => ({ ...row, "Delivery (DN) Primeiro": row["Delivery (DN) Atual"] }));
-
-  // GI Real lookup from EKBE original by Reference -> Pstng Date (kept above)
-  // Already computed in dnMap/grMap with full original data
 
   // Remover colunas 2
   const rem2 = ["Created","Release","Item17","GR/IR clr.6","Value open","UAcctAss.","RevGR IR","Seq. No.","Doc.cond.","Tax Code","PO","DN Qty","Del.NoteUn","Material5","Inv. Value","Compliance","Inv. Value4","Plant","Ref. Doc.","Item3","Reason","Entered","Time","Delivery","D/C Indic.","Val. Type","Processed","Qty. OPUn","Amount","Currency","Hist. Cat.","Movmt type","FiscYrRefD","SqNoAccAss","Transact.","Mat. Year","Quantity7"];
