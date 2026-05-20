@@ -1,0 +1,1758 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Henkel PO Processor — DSV</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --navy-950: #020b18;
+    --navy-900: #041326;
+    --navy-800: #072040;
+    --navy-700: #0a2d57;
+    --navy-600: #0d3a6e;
+    --navy-500: #1050a0;
+    --navy-400: #1a6fd4;
+    --accent: #3b9eff;
+    --accent-glow: #3b9eff33;
+    --accent-bright: #60b8ff;
+    --white: #f0f6ff;
+    --white-dim: #a8bdd6;
+    --white-ghost: #ffffff18;
+    --success: #2ed8a0;
+    --warning: #f5a623;
+    --danger: #ff4d6d;
+    --border: #ffffff14;
+    --border-light: #ffffff28;
+    --card-bg: #ffffff08;
+    --card-hover: #ffffff10;
+    --radius: 14px;
+    --radius-sm: 8px;
+    --shadow: 0 8px 32px #00000080;
+    --shadow-glow: 0 0 40px #3b9eff22;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    font-family: 'DM Sans', sans-serif;
+    background: var(--navy-950);
+    color: var(--white);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Background mesh */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background:
+      radial-gradient(ellipse 60% 40% at 20% 20%, #0a2d5740 0%, transparent 60%),
+      radial-gradient(ellipse 50% 60% at 80% 80%, #1050a030 0%, transparent 60%),
+      radial-gradient(ellipse 40% 30% at 60% 10%, #3b9eff12 0%, transparent 50%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* Subtle grain */
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+    pointer-events: none;
+    opacity: 0.5;
+    z-index: 0;
+  }
+
+  #app { position: relative; z-index: 1; }
+
+  /* HEADER */
+  header {
+    padding: 28px 48px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--border);
+    background: #020b18cc;
+    backdrop-filter: blur(20px);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+
+  .logo-area {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+
+  .logo-icon {
+    width: 40px;
+    height: 40px;
+    background: linear-gradient(135deg, var(--navy-500), var(--accent));
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    box-shadow: 0 4px 16px #3b9eff30;
+  }
+
+  .logo-text {
+    font-family: 'Syne', sans-serif;
+    font-size: 20px;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    color: var(--white);
+  }
+
+  .logo-text span {
+    color: var(--accent);
+  }
+
+  .header-badge {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--accent);
+    background: var(--accent-glow);
+    border: 1px solid #3b9eff44;
+    padding: 4px 10px;
+    border-radius: 20px;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+
+  /* MAIN LAYOUT */
+  main {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 52px 32px 80px;
+  }
+
+  /* PAGE TITLE */
+  .page-hero {
+    margin-bottom: 52px;
+    animation: fadeUp 0.6s ease both;
+  }
+
+  .page-hero h1 {
+    font-family: 'Syne', sans-serif;
+    font-size: clamp(28px, 4vw, 44px);
+    font-weight: 800;
+    line-height: 1.1;
+    letter-spacing: -1px;
+    margin-bottom: 12px;
+  }
+
+  .page-hero h1 .gradient-text {
+    background: linear-gradient(90deg, var(--accent-bright), var(--white));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .page-hero p {
+    font-size: 15px;
+    color: var(--white-dim);
+    max-width: 520px;
+    line-height: 1.6;
+  }
+
+  /* UPLOAD GRID */
+  .upload-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    margin-bottom: 32px;
+    animation: fadeUp 0.6s 0.1s ease both;
+  }
+
+  @media (max-width: 768px) {
+    .upload-grid { grid-template-columns: 1fr; }
+    header { padding: 20px 24px; }
+    main { padding: 32px 20px 60px; }
+  }
+
+  /* UPLOAD CARD */
+  .upload-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    transition: all 0.25s ease;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .upload-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+
+  .upload-card.loaded::before { opacity: 1; }
+  .upload-card.loaded { border-color: #3b9eff44; background: #3b9eff08; }
+
+  .upload-card:hover {
+    border-color: var(--border-light);
+    background: var(--card-hover);
+    transform: translateY(-2px);
+  }
+
+  .card-label {
+    font-family: 'Syne', sans-serif;
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    color: var(--accent);
+    margin-bottom: 6px;
+  }
+
+  .card-title {
+    font-family: 'Syne', sans-serif;
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--white);
+    margin-bottom: 4px;
+  }
+
+  .card-desc {
+    font-size: 12px;
+    color: var(--white-dim);
+    margin-bottom: 16px;
+    line-height: 1.5;
+  }
+
+  .file-drop-area {
+    border: 1.5px dashed var(--border-light);
+    border-radius: var(--radius-sm);
+    padding: 20px 16px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.25s ease;
+    position: relative;
+  }
+
+  .file-drop-area:hover,
+  .file-drop-area.drag-over {
+    border-color: var(--accent);
+    background: var(--accent-glow);
+  }
+
+  .file-drop-area input[type="file"] {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    cursor: pointer;
+    width: 100%;
+    height: 100%;
+  }
+
+  .drop-icon { font-size: 24px; margin-bottom: 8px; }
+  .drop-text { font-size: 12px; color: var(--white-dim); }
+  .drop-text strong { color: var(--white); display: block; font-size: 13px; margin-bottom: 2px; }
+
+  .file-status {
+    margin-top: 10px;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 18px;
+  }
+
+  .file-status .dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .file-status.idle .dot { background: var(--white-ghost); }
+  .file-status.idle span { color: var(--white-dim); }
+  .file-status.ready .dot { background: var(--success); box-shadow: 0 0 6px var(--success); }
+  .file-status.ready span { color: var(--success); }
+  .file-status.error .dot { background: var(--danger); }
+  .file-status.error span { color: var(--danger); }
+
+  /* PROCESS SECTION */
+  .process-section {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 28px 32px;
+    margin-bottom: 24px;
+    animation: fadeUp 0.6s 0.2s ease both;
+  }
+
+  .section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 24px;
+  }
+
+  .section-title {
+    font-family: 'Syne', sans-serif;
+    font-size: 17px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .section-title .badge {
+    font-size: 10px;
+    padding: 3px 8px;
+    border-radius: 20px;
+    font-weight: 500;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+
+  .badge-blue { background: var(--accent-glow); color: var(--accent); border: 1px solid #3b9eff33; }
+  .badge-orange { background: #f5a62320; color: var(--warning); border: 1px solid #f5a62340; }
+
+  /* OPTIONS ROW */
+  .options-row {
+    display: flex;
+    gap: 24px;
+    flex-wrap: wrap;
+    margin-bottom: 24px;
+  }
+
+  .toggle-group {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    flex: 1;
+    min-width: 200px;
+  }
+
+  .toggle-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .toggle-item input[type="checkbox"] { display: none; }
+
+  .toggle-track {
+    width: 36px; height: 20px;
+    background: var(--navy-700);
+    border-radius: 10px;
+    border: 1px solid var(--border-light);
+    position: relative;
+    transition: all 0.2s;
+    flex-shrink: 0;
+  }
+
+  .toggle-track::after {
+    content: '';
+    position: absolute;
+    width: 14px; height: 14px;
+    background: var(--white-dim);
+    border-radius: 50%;
+    top: 2px; left: 2px;
+    transition: all 0.2s;
+  }
+
+  input[type="checkbox"]:checked + .toggle-track {
+    background: var(--navy-500);
+    border-color: var(--accent);
+  }
+
+  input[type="checkbox"]:checked + .toggle-track::after {
+    left: 18px;
+    background: var(--accent);
+    box-shadow: 0 0 6px var(--accent);
+  }
+
+  .toggle-label { font-size: 13px; color: var(--white-dim); }
+
+  /* RUN BUTTON */
+  .run-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    width: 100%;
+    padding: 16px 24px;
+    background: linear-gradient(135deg, var(--navy-500), var(--accent));
+    border: none;
+    border-radius: var(--radius-sm);
+    font-family: 'Syne', sans-serif;
+    font-size: 15px;
+    font-weight: 700;
+    color: white;
+    cursor: pointer;
+    transition: all 0.25s ease;
+    letter-spacing: 0.3px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .run-button::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, var(--accent), var(--accent-bright));
+    opacity: 0;
+    transition: opacity 0.25s;
+  }
+
+  .run-button:hover::before { opacity: 1; }
+  .run-button:hover { transform: translateY(-2px); box-shadow: 0 8px 32px #3b9eff40; }
+  .run-button:active { transform: translateY(0); }
+  .run-button span { position: relative; z-index: 1; }
+  .run-button:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+  .run-button:disabled::before { opacity: 0; }
+
+  /* PROGRESS */
+  .progress-section {
+    display: none;
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 28px 32px;
+    margin-bottom: 24px;
+    animation: fadeUp 0.4s ease both;
+  }
+
+  .progress-section.visible { display: block; }
+
+  .steps-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 20px;
+  }
+
+  .step-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 13px;
+    color: var(--white-dim);
+    padding: 10px 14px;
+    border-radius: var(--radius-sm);
+    border: 1px solid transparent;
+    transition: all 0.3s;
+  }
+
+  .step-item.active {
+    color: var(--white);
+    background: var(--white-ghost);
+    border-color: var(--border);
+  }
+
+  .step-item.done {
+    color: var(--success);
+    background: #2ed8a008;
+    border-color: #2ed8a022;
+  }
+
+  .step-item.error {
+    color: var(--danger);
+    background: #ff4d6d08;
+    border-color: #ff4d6d22;
+  }
+
+  .step-icon {
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    font-size: 11px;
+    background: var(--navy-700);
+    color: var(--white-dim);
+  }
+
+  .step-item.active .step-icon {
+    background: var(--navy-500);
+    color: var(--accent);
+    animation: pulse 1s infinite;
+  }
+
+  .step-item.done .step-icon {
+    background: #2ed8a020;
+    color: var(--success);
+  }
+
+  .step-item.error .step-icon {
+    background: #ff4d6d20;
+    color: var(--danger);
+  }
+
+  /* PROGRESS BAR */
+  .progress-bar-wrap {
+    background: var(--navy-800);
+    border-radius: 20px;
+    height: 6px;
+    overflow: hidden;
+    margin-bottom: 20px;
+  }
+
+  .progress-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--navy-500), var(--accent-bright));
+    border-radius: 20px;
+    transition: width 0.5s ease;
+    box-shadow: 0 0 10px var(--accent);
+  }
+
+  /* RESULTS SECTION */
+  .results-section {
+    display: none;
+    animation: fadeUp 0.4s ease both;
+  }
+
+  .results-section.visible { display: block; }
+
+  .results-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+
+  .stat-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 16px 20px;
+  }
+
+  .stat-label { font-size: 11px; color: var(--white-dim); text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 6px; }
+  .stat-value {
+    font-family: 'Syne', sans-serif;
+    font-size: 28px;
+    font-weight: 800;
+    color: var(--accent-bright);
+    line-height: 1;
+  }
+
+  .download-area {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 28px 32px;
+  }
+
+  .download-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+    margin-top: 20px;
+  }
+
+  .download-btn {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 18px;
+    background: var(--white-ghost);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-sm);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 13px;
+    color: var(--white);
+    cursor: pointer;
+    transition: all 0.25s;
+    text-align: left;
+  }
+
+  .download-btn:hover {
+    background: #3b9eff15;
+    border-color: #3b9eff55;
+    transform: translateX(3px);
+  }
+
+  .download-btn .dl-icon {
+    width: 36px; height: 36px;
+    background: linear-gradient(135deg, var(--navy-600), var(--navy-500));
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    flex-shrink: 0;
+  }
+
+  .dl-info strong { display: block; font-size: 13px; font-weight: 500; }
+  .dl-info small { color: var(--white-dim); font-size: 11px; }
+
+  /* LOG */
+  .log-section {
+    margin-top: 24px;
+  }
+
+  .log-toggle {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 10px 16px;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 13px;
+    color: var(--white-dim);
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    margin-bottom: 0;
+  }
+
+  .log-toggle:hover { background: var(--white-ghost); color: var(--white); }
+
+  .log-box {
+    display: none;
+    margin-top: 8px;
+    background: var(--navy-900);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 16px;
+    max-height: 240px;
+    overflow-y: auto;
+    font-family: 'Courier New', monospace;
+    font-size: 11px;
+    line-height: 1.6;
+    color: var(--white-dim);
+  }
+
+  .log-box.open { display: block; }
+  .log-entry { padding: 2px 0; }
+  .log-entry.ok { color: var(--success); }
+  .log-entry.warn { color: var(--warning); }
+  .log-entry.err { color: var(--danger); }
+  .log-entry.info { color: var(--accent); }
+
+  /* ANIMATIONS */
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 0 0 0 #3b9eff40; }
+    50%       { box-shadow: 0 0 0 5px #3b9eff00; }
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  .spinner {
+    display: inline-block;
+    width: 14px; height: 14px;
+    border: 2px solid #ffffff40;
+    border-top-color: white;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  /* FOOTER */
+  footer {
+    text-align: center;
+    padding: 32px;
+    font-size: 12px;
+    color: var(--white-dim);
+    border-top: 1px solid var(--border);
+    opacity: 0.6;
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: var(--navy-900); }
+  ::-webkit-scrollbar-thumb { background: var(--navy-600); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--navy-500); }
+</style>
+</head>
+<body>
+<div id="app">
+
+<header>
+  <div class="logo-area">
+    <div class="logo-icon">📦</div>
+    <div class="logo-text">Henkel <span>PO</span> Processor</div>
+  </div>
+  <div class="header-badge">DSV · Importação</div>
+</header>
+
+<main>
+
+  <div class="page-hero">
+    <h1><span class="gradient-text">Tratamento Unificado</span><br>de Bases PO</h1>
+    <p>Faça o upload dos três arquivos de origem (EKBE, PreshipmentV2 e VTTP), configure as opções e baixe os resultados tratados diretamente no seu navegador — sem servidor, sem instalação.</p>
+  </div>
+
+  <!-- UPLOAD CARDS -->
+  <div class="upload-grid">
+
+    <div class="upload-card" id="card-ekbe">
+      <div class="card-label">Base 01</div>
+      <div class="card-title">EKBE.xlsx</div>
+      <div class="card-desc">Movimentos de entrada de mercadoria (histórico de documentos contábeis).</div>
+      <div class="file-drop-area" id="drop-ekbe">
+        <input type="file" accept=".xlsx,.xls" id="input-ekbe" onchange="handleFile('ekbe', this)">
+        <div class="drop-icon">📄</div>
+        <div class="drop-text"><strong>Clique ou arraste</strong>EKBE.xlsx aqui</div>
+      </div>
+      <div class="file-status idle" id="status-ekbe">
+        <div class="dot"></div>
+        <span>Aguardando arquivo…</span>
+      </div>
+    </div>
+
+    <div class="upload-card" id="card-preship">
+      <div class="card-label">Base 02</div>
+      <div class="card-title">PreshipmentV2.xlsx</div>
+      <div class="card-desc">Dados de pré-embarque com informações de PO, datas e país de origem.</div>
+      <div class="file-drop-area" id="drop-preship">
+        <input type="file" accept=".xlsx,.xls" id="input-preship" onchange="handleFile('preship', this)">
+        <div class="drop-icon">📄</div>
+        <div class="drop-text"><strong>Clique ou arraste</strong>PreshipmentV2.xlsx aqui</div>
+      </div>
+      <div class="file-status idle" id="status-preship">
+        <div class="dot"></div>
+        <span>Aguardando arquivo…</span>
+      </div>
+    </div>
+
+    <div class="upload-card" id="card-vttp">
+      <div class="card-label">Base 03</div>
+      <div class="card-title">VTTP.xlsx</div>
+      <div class="card-desc">Dados de shipment com número de remessa, datas e deliveries vinculadas.</div>
+      <div class="file-drop-area" id="drop-vttp">
+        <input type="file" accept=".xlsx,.xls" id="input-vttp" onchange="handleFile('vttp', this)">
+        <div class="drop-icon">📄</div>
+        <div class="drop-text"><strong>Clique ou arraste</strong>VTTP.xlsx aqui</div>
+      </div>
+      <div class="file-status idle" id="status-vttp">
+        <div class="dot"></div>
+        <span>Aguardando arquivo…</span>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- PROCESS CONFIG -->
+  <div class="process-section">
+    <div class="section-header">
+      <div class="section-title">
+        ⚙️ Configurações de Processamento
+        <span class="badge badge-blue">Preshipment</span>
+      </div>
+    </div>
+
+    <div class="options-row">
+      <div class="toggle-group">
+        <label class="toggle-item">
+          <input type="checkbox" id="opt-filtrar-paises" checked>
+          <div class="toggle-track"></div>
+          <span class="toggle-label">Filtrar Países Permitidos (DE, FR, IT, ES, NL, US, BE, LU, PT, GR, IE, AT, FI, SE, DK, NO, CH, GB, HU)</span>
+        </label>
+        <label class="toggle-item">
+          <input type="checkbox" id="opt-filtrar-qtd" checked>
+          <div class="toggle-track"></div>
+          <span class="toggle-label">Remover linhas com Quantidade zero ou nula</span>
+        </label>
+        <label class="toggle-item">
+          <input type="checkbox" id="opt-auditoria" checked>
+          <div class="toggle-track"></div>
+          <span class="toggle-label">Gerar arquivo de Auditoria (Preshipment)</span>
+        </label>
+      </div>
+    </div>
+
+    <button class="run-button" id="btn-run" onclick="runAll()" disabled>
+      <span id="btn-icon">▶</span>
+      <span id="btn-label">Processar Arquivos</span>
+    </button>
+  </div>
+
+  <!-- PROGRESS -->
+  <div class="progress-section" id="progress-section">
+    <div class="section-title" style="margin-bottom:16px">
+      ⚡ Processando…
+    </div>
+    <div class="progress-bar-wrap">
+      <div class="progress-bar-fill" id="progress-bar" style="width:0%"></div>
+    </div>
+    <div class="steps-list" id="steps-list">
+      <div class="step-item" id="step-preship"><div class="step-icon">1</div>Tratando PreshipmentV2…</div>
+      <div class="step-item" id="step-ekbe"><div class="step-icon">2</div>Tratando EKBE…</div>
+      <div class="step-item" id="step-merge"><div class="step-icon">3</div>Mesclando EKBE + Preshipment…</div>
+      <div class="step-item" id="step-vttp"><div class="step-icon">4</div>Enriquecendo com VTTP (Shipment)…</div>
+      <div class="step-item" id="step-final"><div class="step-icon">5</div>Finalizações e ajustes de colunas…</div>
+      <div class="step-item" id="step-export"><div class="step-icon">6</div>Gerando arquivos de saída…</div>
+    </div>
+  </div>
+
+  <!-- RESULTS -->
+  <div class="results-section" id="results-section">
+    <div class="results-grid" id="results-stats"></div>
+    <div class="download-area">
+      <div class="section-title">📥 Downloads Disponíveis</div>
+      <div class="download-grid" id="download-grid"></div>
+    </div>
+    <div class="log-section">
+      <button class="log-toggle" onclick="toggleLog()">
+        <span>📋</span> Ver Log de Processamento
+        <span id="log-arrow" style="margin-left:auto">▼</span>
+      </button>
+      <div class="log-box" id="log-box"></div>
+    </div>
+  </div>
+
+</main>
+
+<footer>Henkel PO Processor · DSV Importação · Processamento 100% local no navegador</footer>
+
+</div>
+
+<script>
+// ============================================================
+// STATE
+// ============================================================
+const state = {
+  ekbe: null,
+  preship: null,
+  vttp: null,
+  results: {}
+};
+
+const logs = [];
+
+// ============================================================
+// FILE HANDLING
+// ============================================================
+function handleFile(key, input) {
+  const file = input.files[0];
+  if (!file) return;
+  setStatus(key, 'loading', `Lendo ${file.name}…`);
+
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const wb = XLSX.read(e.target.result, { type: 'array', cellDates: true });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const data = XLSX.utils.sheet_to_json(ws, { defval: null, raw: false });
+      state[key] = data;
+      const rows = data.length;
+      const cols = data.length > 0 ? Object.keys(data[0]).length : 0;
+      setStatus(key, 'ready', `${file.name} · ${rows.toLocaleString('pt-BR')} linhas, ${cols} colunas`);
+      document.getElementById(`card-${key}`).classList.add('loaded');
+      addLog('ok', `[${key.toUpperCase()}] Carregado: ${rows} linhas, ${cols} colunas.`);
+      checkReady();
+    } catch(err) {
+      setStatus(key, 'error', 'Erro ao ler arquivo: ' + err.message);
+      addLog('err', `[${key.toUpperCase()}] Erro: ${err.message}`);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function setStatus(key, type, msg) {
+  const el = document.getElementById(`status-${key}`);
+  el.className = `file-status ${type === 'loading' ? 'idle' : type}`;
+  el.innerHTML = `<div class="dot"></div><span>${msg}</span>`;
+}
+
+function checkReady() {
+  const ready = state.ekbe && state.preship && state.vttp;
+  document.getElementById('btn-run').disabled = !ready;
+}
+
+// Drag and drop
+['ekbe','preship','vttp'].forEach(key => {
+  const drop = document.getElementById(`drop-${key}`);
+  const inputId = `input-${key}`;
+  drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('drag-over'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('drag-over'));
+  drop.addEventListener('drop', e => {
+    e.preventDefault();
+    drop.classList.remove('drag-over');
+    const file = e.dataTransfer.files[0];
+    if (file) {
+      const input = document.getElementById(inputId);
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      input.files = dt.files;
+      handleFile(key, input);
+    }
+  });
+});
+
+// ============================================================
+// LOGGING
+// ============================================================
+function addLog(type, msg) {
+  logs.push({ type, msg });
+  const box = document.getElementById('log-box');
+  if (box.classList.contains('open')) renderLog();
+}
+
+function renderLog() {
+  const box = document.getElementById('log-box');
+  box.innerHTML = logs.map(l => `<div class="log-entry ${l.type}">${l.msg}</div>`).join('');
+  box.scrollTop = box.scrollHeight;
+}
+
+function toggleLog() {
+  const box = document.getElementById('log-box');
+  box.classList.toggle('open');
+  document.getElementById('log-arrow').textContent = box.classList.contains('open') ? '▲' : '▼';
+  if (box.classList.contains('open')) renderLog();
+}
+
+// ============================================================
+// PROGRESS
+// ============================================================
+function setStep(id, status) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.className = `step-item ${status}`;
+  const icon = el.querySelector('.step-icon');
+  const num = icon.textContent;
+  if (status === 'done') icon.textContent = '✓';
+  else if (status === 'error') icon.textContent = '✗';
+  else if (status === 'active') icon.textContent = num;
+}
+
+function setProgress(pct) {
+  document.getElementById('progress-bar').style.width = pct + '%';
+}
+
+// ============================================================
+// UTILITIES
+// ============================================================
+function parseDate(val) {
+  if (!val) return null;
+  if (val instanceof Date) return isNaN(val) ? null : val;
+  const d = new Date(val);
+  return isNaN(d) ? null : d;
+}
+
+function fmtDate(val) {
+  const d = parseDate(val);
+  if (!d) return null;
+  return d.toLocaleDateString('pt-BR');
+}
+
+function toNum(x) {
+  if (x === null || x === undefined || x === '') return null;
+  const s = String(x).trim().replace(/\./g,'').replace(',','.');
+  const n = parseFloat(s);
+  return isNaN(n) ? null : n;
+}
+
+function fmtQtyLink(x) {
+  if (x === null || x === undefined) return '';
+  try {
+    const f = parseFloat(x);
+    if (Number.isInteger(f)) return String(f);
+    return String(f).replace('.', ',');
+  } catch { return String(x).replace('.', ','); }
+}
+
+function deepCopy(arr) { return JSON.parse(JSON.stringify(arr)); }
+
+// ============================================================
+// STEP 1: PROCESS PRESHIPMENT
+// ============================================================
+function processPreshipment(raw, opts) {
+  addLog('info', '[PRESHIP] Iniciando tratamento PreshipmentV2…');
+  let df = deepCopy(raw);
+
+  const PAISES_PERMITIDOS = new Set(["DE","FR","IT","ES","NL","US","BE","LU","PT","GR","IE","AT","FI","SE","DK","NO","CH","GB","HU"]);
+
+  // Renomear colunas
+  const renameMap = {
+    "A~Short Text": "Txt. Breve",
+    "A~Material": "IDH (PartNumber)",
+    "A~Plant": "Filial",
+    "B~Mat.Av.Dt.": "Prontidão Prevista Atual",
+    "B~GI Date": "GI Date Atual",
+    "A~Quantity": "Quantidade Original",
+    "A~Order Unit": "UM pedido",
+    "A~Item": "Item",
+    "A~Incoterms": "Incoterms",
+    "E~Country": "País",
+    "B~Deliv.Date": "Delivery Estimate",
+    "B~Deliv.date": "Delivery Estimate"
+  };
+
+  df = df.map(row => {
+    const newRow = {};
+    for (const [k,v] of Object.entries(row)) {
+      newRow[renameMap[k] || k] = v;
+    }
+    return newRow;
+  });
+
+  // Criar Doc. Compra (PO)
+  df = df.map(row => ({
+    ...row,
+    "Doc. Compra (PO)": row["A~Pur. Doc."] ? String(row["A~Pur. Doc."]).trim() : null
+  }));
+
+  // Min dates por PO
+  const minPront = {};
+  const minGI = {};
+  df.forEach(row => {
+    const po = row["A~Pur. Doc."];
+    if (row["Prontidão Prevista Atual"]) {
+      const d = parseDate(row["Prontidão Prevista Atual"]);
+      if (d) { if (!minPront[po] || d < minPront[po]) minPront[po] = d; }
+    }
+    if (row["GI Date Atual"]) {
+      const d = parseDate(row["GI Date Atual"]);
+      if (d) { if (!minGI[po] || d < minGI[po]) minGI[po] = d; }
+    }
+  });
+  df = df.map(row => ({
+    ...row,
+    "Prontidão Inicial 2": minPront[row["A~Pur. Doc."]] ? fmtDate(minPront[row["A~Pur. Doc."]]) : null,
+    "GI Date Inicial 2":  minGI[row["A~Pur. Doc."]]   ? fmtDate(minGI[row["A~Pur. Doc."]])   : null
+  }));
+
+  // Fornecedor
+  df = df.map(row => ({
+    ...row,
+    "Fornecedor": (row["C~Suppl.Vndr"] ? String(row["C~Suppl.Vndr"]) : '') + ' - ' + (row["E~Name"] ? String(row["E~Name"]) : '')
+  }));
+
+  // Normalizar Quantidade
+  df = df.map(row => {
+    let qty = toNum(row["B~Cmmttd Qty"]);
+    const qtyOrig = toNum(row["Quantidade Original"]);
+    if (!qty && qtyOrig) qty = qtyOrig;
+    return { ...row, "B~Cmmttd Qty": qty, "Quantidade Original": qtyOrig, "Quantidade": qty || qtyOrig };
+  });
+
+  // Auditoria input
+  let dfIn = null;
+  if (opts.gerarAuditoria) dfIn = deepCopy(df);
+
+  // Filtros
+  let dfFiltered = df;
+  if (opts.filtrarPaises) {
+    dfFiltered = dfFiltered.filter(row => {
+      const p = row["País"] ? String(row["País"]).trim() : '';
+      return PAISES_PERMITIDOS.has(p);
+    });
+    addLog('ok', `[PRESHIP] Filtro de países aplicado. Restam ${dfFiltered.length} linhas.`);
+  }
+  if (opts.filtrarQtd) {
+    dfFiltered = dfFiltered.filter(row => {
+      const q = toNum(row["Quantidade"]);
+      const qo = toNum(row["Quantidade Original"]);
+      return (q !== null && q !== 0) || (qo !== null && qo !== 0);
+    });
+    addLog('ok', `[PRESHIP] Filtro quantidade zero. Restam ${dfFiltered.length} linhas.`);
+  }
+
+  // Dedup
+  const seen = new Set();
+  dfFiltered = dfFiltered.filter(row => {
+    const key = `${row["B~Sch. Line"]}|${row["A~Pur. Doc."]}|${row["Quantidade"]}|${row["Item"]}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  // Renomeações finais
+  dfFiltered = dfFiltered.map(row => {
+    const r = { ...row };
+    if ("F~MRP Cont." in r) { r["Planner"] = r["F~MRP Cont."]; delete r["F~MRP Cont."]; }
+    if ("B~GR End" in r) { r["GR End"] = r["B~GR End"]; delete r["B~GR End"]; }
+    if ("B~Cmmttd Qty" in r) delete r["B~Cmmttd Qty"];
+    return r;
+  });
+
+  // PO
+  dfFiltered = dfFiltered.map(row => ({ ...row, PO: row["Doc. Compra (PO)"] }));
+
+  // Via de Transporte
+  dfFiltered = dfFiltered.map(row => {
+    let vt = null;
+    if (row["G~Shp.Cond."]) {
+      const s = String(row["G~Shp.Cond."]);
+      if (s.startsWith('6')) vt = 'MARITIMA';
+      else if (s.startsWith('3')) vt = 'AEREA';
+      else vt = 'RODOVIARIA';
+    }
+    return { ...row, "Via de Transporte": vt };
+  });
+
+  // Remove colunas desnecessárias
+  const toRemove = ["C~Doc. Type","A~Delet.ind.","A~Del. Cmpl.","A~Del. Ind.","A~Processed","B~Sch. Line","B~Qty Deliv.","B~Loadg Date","B~TrpPlanDt","C~Suppl.Vndr","E~Name","D~Descript.","D~Descript.2","D~Descript.3","F~MRP group","A~Inco. 2","G~Shp.Cond.","H~Del. Date","H~Quantity","H~Reference"];
+  dfFiltered = dfFiltered.map(row => {
+    const r = { ...row };
+    toRemove.forEach(c => delete r[c]);
+    return r;
+  });
+
+  // Formatar datas
+  const dataCols = ["Delivery Estimate","Prontidão Prevista Atual","GI Date Atual","GR End","Prontidão Inicial 2","GI Date Inicial 2"];
+  dfFiltered = dfFiltered.map(row => {
+    const r = { ...row };
+    dataCols.forEach(c => { if (c in r) r[c] = fmtDate(r[c]); });
+    return r;
+  });
+
+  // Link
+  dfFiltered = dfFiltered.map(row => {
+    const po  = row["Doc. Compra (PO)"] || '';
+    const it  = row["Item"] || '';
+    const qty = fmtQtyLink(row["Quantidade"]);
+    return { ...row, Link: `${po}-${it}-${qty}` };
+  });
+
+  addLog('ok', `[PRESHIP] Tratamento concluído. ${dfFiltered.length} linhas finais.`);
+
+  // Auditoria
+  let audit = null;
+  if (opts.gerarAuditoria && dfIn) {
+    audit = dfIn;
+    addLog('ok', `[PRESHIP] Auditoria gerada. ${dfIn.length} linhas de entrada.`);
+  }
+
+  return { df: dfFiltered, audit };
+}
+
+// ============================================================
+// STEP 2: PROCESS EKBE
+// ============================================================
+function processEkbe(raw) {
+  addLog('info', '[EKBE] Iniciando tratamento EKBE…');
+  let df = deepCopy(raw);
+
+  // Renomear colunas
+  df = df.map(row => {
+    const r = { ...row };
+    if ("Quantity" in r) { r["Quantidade"] = r["Quantity"]; delete r["Quantity"]; }
+    if ("Pur. Doc." in r) { r["Doc. Compra (PO)"] = r["Pur. Doc."]; delete r["Pur. Doc."]; }
+    if ("Material" in r) { r["Material_Original"] = r["Material"]; delete r["Material"]; }
+    if ("Doc. Date" in r) { r["Criação PO"] = r["Doc. Date"]; delete r["Doc. Date"]; }
+    if ("Item.1" in r) { r["Item2"] = r["Item.1"]; delete r["Item.1"]; }
+    return r;
+  });
+
+  // Converter datas
+  df = df.map(row => ({
+    ...row,
+    "Pstng Date": parseDate(row["Pstng Date"]),
+    "Entered": parseDate(row["Entered"]),
+    "Criação PO": parseDate(row["Criação PO"])
+  }));
+
+  // DN Real e GR Real por PO+Item+Quantidade (Hist. Cat. L = DN, E = GR)
+  // Chave inclui Quantidade para evitar espelhar data de um lote em outro que ainda não teve GR lançado
+  const dnMap = {}, grMap = {};
+  df.forEach(row => {
+    const qty = toNum(row["Quantidade"]);
+    const k = `${row["Doc. Compra (PO)"]}|${row["Item"]}|${qty}`;
+    const cat = row["Hist. Cat."] ? String(row["Hist. Cat."]).trim() : '';
+    const d = row["Pstng Date"];
+    if (cat === 'L' && d) { if (!dnMap[k] || d < dnMap[k]) dnMap[k] = d; }
+    if (cat === 'E' && d) { if (!grMap[k] || d < grMap[k]) grMap[k] = d; }
+  });
+
+  df = df.map(row => {
+    const qty = toNum(row["Quantidade"]);
+    const k = `${row["Doc. Compra (PO)"]}|${row["Item"]}|${qty}`;
+    return {
+      ...row,
+      "DN Real": dnMap[k] ? fmtDate(dnMap[k]) : null,
+      "GR Real": grMap[k] ? fmtDate(grMap[k]) : null
+    };
+  });
+
+  // Criação PO mínima por PO
+  const minCriacao = {};
+  df.forEach(row => {
+    const po = row["Doc. Compra (PO)"];
+    const d = row["Criação PO"];
+    if (d) { if (!minCriacao[po] || d < minCriacao[po]) minCriacao[po] = d; }
+  });
+  df = df.map(row => ({
+    ...row,
+    "Criação PO": minCriacao[row["Doc. Compra (PO)"]] ? fmtDate(minCriacao[row["Doc. Compra (PO)"]]) : null
+  }));
+
+  // Quantidade Inicial (máx por PO)
+  const maxQty = {};
+  df.forEach(row => {
+    const po = row["Doc. Compra (PO)"];
+    const q = toNum(row["Quantidade"]);
+    if (q !== null) { if (maxQty[po] === undefined || q > maxQty[po]) maxQty[po] = q; }
+  });
+  df = df.map(row => ({ ...row, "Quantidade Inicial": maxQty[row["Doc. Compra (PO)"]] ?? null }));
+
+  // IDH por PO
+  const idhMap = {};
+  df.forEach(row => {
+    const po = row["Doc. Compra (PO)"];
+    if (!idhMap[po] && row["Material_Original"]) idhMap[po] = row["Material_Original"];
+  });
+  df = df.map(row => ({ ...row, "IDH (PartNumber)": idhMap[row["Doc. Compra (PO)"]] || null }));
+
+  // Batch por PO+Qty+Item2
+  const batchMap = {};
+  df.forEach(row => {
+    const k = `${row["Doc. Compra (PO)"]}|${row["Quantidade"]}|${row["Item2"]}`;
+    if (!batchMap[k] && row["Batch"]) batchMap[k] = row["Batch"];
+  });
+  df = df.map(row => {
+    const k = `${row["Doc. Compra (PO)"]}|${row["Quantidade"]}|${row["Item2"]}`;
+    return { ...row, "Batch": batchMap[k] || row["Batch"] || null };
+  });
+
+  df = df.map(row => ({ ...row, PO: row["Doc. Compra (PO)"] }));
+
+  // MaxBatch para referência
+  const maxBatch = {};
+  df.forEach(row => {
+    const po = row["Doc. Compra (PO)"];
+    const q = toNum(row["Quantidade"]);
+    if (q !== null) { if (maxBatch[po] === undefined || q > maxBatch[po]) maxBatch[po] = q; }
+  });
+  df = df.map(row => ({ ...row, MaxBatch: maxBatch[row["Doc. Compra (PO)"]] ?? null }));
+
+  // Filtros
+  df = df.filter(row => {
+    const md = row["Mat. Doc."] ? String(row["Mat. Doc."]).startsWith('9') : false;
+    return md;
+  });
+  df = df.filter(row => { const q = toNum(row["Quantidade"]); return q !== null && q !== 0; });
+
+  // Remover colunas
+  const rem1 = ["Stk Seg.","Log.System","SU","Comp flag","SeasonYear","Season","Collection","Theme","Quantity18","Char1","Char2","Char3","303-Beleg","303-B.jahr","305-Beleg","305-B.jahr","Rec. plant","Coluna1","Quantity9","Qty. OPUn10","Amount LC11","Amount12","Val.BS OUn","Val. GR BS","Orig. Acc.","GR/IR clr.13","E/R Diff.","Retention","Retention14","Retention15","Retention16","Multi AA","Exch. Rate","Origin","Service","Number","Line","SeqNo.POAA","SRVRet","GR/IR clr.8","FC amount","GR/IR clr.","Reference","GR Bl. OUn","GR blocked","Material_Original","MaxBatch"];
+  df = df.map(row => { const r = {...row}; rem1.forEach(c => delete r[c]); return r; });
+
+  // Renomear
+  df = df.map(row => {
+    const r = {...row};
+    if ("Amount LC" in r) { r["Valor Total"] = r["Amount LC"]; delete r["Amount LC"]; }
+    if ("Mat. Doc." in r) { r["Delivery (DN) Atual"] = r["Mat. Doc."]; delete r["Mat. Doc."]; }
+    if ("Local cur." in r) { r["Moeda FOB"] = r["Local cur."]; delete r["Local cur."]; }
+    return r;
+  });
+
+  // Delivery (DN) Primeiro
+  df = df.map(row => ({ ...row, "Delivery (DN) Primeiro": row["Delivery (DN) Atual"] }));
+
+  // GI Real lookup from EKBE original by Reference -> Pstng Date (kept above)
+  // Already computed in dnMap/grMap with full original data
+
+  // Remover colunas 2
+  const rem2 = ["Created","Release","Item17","GR/IR clr.6","Value open","UAcctAss.","RevGR IR","Seq. No.","Doc.cond.","Tax Code","PO","DN Qty","Del.NoteUn","Material5","Inv. Value","Compliance","Inv. Value4","Plant","Ref. Doc.","Item3","Reason","Entered","Time","Delivery","D/C Indic.","Val. Type","Processed","Qty. OPUn","Amount","Currency","Hist. Cat.","Movmt type","FiscYrRefD","SqNoAccAss","Transact.","Mat. Year","Quantity7"];
+  df = df.map(row => { const r = {...row}; rem2.forEach(c => delete r[c]); return r; });
+
+  // Reorder
+  const order = ["Doc. Compra (PO)","Item","IDH (PartNumber)","Quantidade Inicial","Quantidade","Delivery (DN) Atual","Delivery (DN) Primeiro","Valor Total","Moeda FOB","Item2","Batch","Criação PO","DN Real","GI Real","GR Real"];
+  df = df.map(row => {
+    const r = {};
+    order.forEach(c => { if (c in row) r[c] = row[c]; });
+    // keep extra cols
+    Object.keys(row).forEach(c => { if (!(c in r)) r[c] = row[c]; });
+    return r;
+  });
+
+  // Mat.doc - Link
+  df = df.map(row => {
+    const po  = row["Doc. Compra (PO)"] || '';
+    const it  = row["Item"] || '';
+    const qty = fmtQtyLink(row["Quantidade"]);
+    return { ...row, "Mat.doc - Link": `${po}-${it}-${qty}` };
+  });
+
+  // Final output
+  const ekbeFinal = df.map(row => {
+    const r = {};
+    order.forEach(c => { if (c in row) r[c] = row[c]; });
+    r["Mat.doc - Link"] = row["Mat.doc - Link"];
+    return r;
+  });
+
+  addLog('ok', `[EKBE] Tratamento concluído. ${ekbeFinal.length} linhas.`);
+  return ekbeFinal;
+}
+
+// ============================================================
+// STEP 3: MERGE EKBE + PRESHIPMENT
+// ============================================================
+function mergeEkbePreship(ekbeData, preshData, preshRaw) {
+  addLog('info', '[MERGE] Mesclando EKBE + Preshipment…');
+
+  const colsFromPreship = ["Txt. Breve","Filial","UM pedido","Delivery Estimate",
+    "Prontidão Prevista Atual","GI Date Atual","GR End","País","Planner","Incoterms",
+    "Fornecedor","Via de Transporte","IDH (PartNumber)"];
+
+  // Lookup Preshipment by Doc. Compra (PO)
+  const preshByPO = {};
+  preshData.forEach(row => {
+    const po = String(row["Doc. Compra (PO)"] || row["A~Pur. Doc."] || '').trim();
+    if (!preshByPO[po]) preshByPO[po] = row;
+  });
+
+  let merged = ekbeData.map(row => {
+    const po = String(row["Doc. Compra (PO)"] || '').trim();
+    const p = preshByPO[po] || {};
+    const r = { ...row };
+    colsFromPreship.forEach(c => {
+      if (c === "IDH (PartNumber)") {
+        r[`${c}_EKBE`] = row[c];
+        r[`${c}_Preshipment`] = p[c] || null;
+      } else {
+        r[c] = p[c] !== undefined ? p[c] : (row[c] || null);
+      }
+    });
+    return r;
+  });
+
+  // No-match rows from Preshipment
+  const ekbePOs = new Set(ekbeData.map(r => String(r["Doc. Compra (PO)"] || '').trim()));
+  const noMatch = preshData.filter(row => {
+    const po = String(row["Doc. Compra (PO)"] || '').trim();
+    return !ekbePOs.has(po);
+  }).map(row => {
+    const r = {};
+    const copy = ["Doc. Compra (PO)","Item","Txt. Breve","IDH (PartNumber)","Filial","Quantidade Original","UM pedido","Delivery Estimate","Prontidão Prevista Atual","GI Date Atual","GR End","País","Planner","Incoterms","Fornecedor","Quantidade","Via de Transporte"];
+    copy.forEach(c => { r[c] = row[c] || null; });
+    r["IDH (PartNumber)_EKBE"] = null;
+    r["IDH (PartNumber)_Preshipment"] = row["IDH (PartNumber)"] || null;
+    r["Mat.doc - Link"] = null;
+    return r;
+  });
+
+  let df = [...merged, ...noMatch];
+
+  // Resolve IDH
+  df = df.map(row => ({
+    ...row,
+    "IDH (PartNumber)": row["IDH (PartNumber)_Preshipment"] || row["IDH (PartNumber)_EKBE"] || null
+  }));
+  df = df.map(row => { const r = {...row}; delete r["IDH (PartNumber)_EKBE"]; delete r["IDH (PartNumber)_Preshipment"]; return r; });
+
+  // CNPJ
+  df = df.map(row => ({ ...row, CNPJ: "02.777.131/0034-73" }));
+
+  // Rename
+  df = df.map(row => {
+    const r = {...row};
+    if ("Quantidade Inicial" in r && !("Quantidade Original" in r)) { r["Quantidade Original"] = r["Quantidade Inicial"]; delete r["Quantidade Inicial"]; }
+    if ("Prontidão Prevista Atual" in r) { r["Prontidão Atual"] = r["Prontidão Prevista Atual"]; delete r["Prontidão Prevista Atual"]; }
+    return r;
+  });
+
+  // Dedup
+  const seenMerge = new Set();
+  df = df.filter(row => {
+    const k = `${row["Doc. Compra (PO)"]}|${row["Item"]}|${row["Quantidade"]}|${row["Delivery (DN) Atual"]}|${row["Batch"]}`;
+    if (seenMerge.has(k)) return false;
+    seenMerge.add(k);
+    return true;
+  });
+
+  // Valor Total: 0 ou null → 1000
+  df = df.map(row => {
+    const vt = toNum(row["Valor Total"]);
+    return { ...row, "Valor Total": (!vt || vt === 0) ? 1000 : vt };
+  });
+
+  // Moeda FOB → null
+  df = df.map(row => ({ ...row, "Moeda FOB": null }));
+
+  // Remove Item, re-create
+  df = df.map(row => { const r = {...row}; delete r["Item"]; return r; });
+  const poCounts = {};
+  df = df.map(row => {
+    const po = String(row["Doc. Compra (PO)"] || '');
+    poCounts[po] = (poCounts[po] || 0) + 1;
+    return { ...row, Item: poCounts[po] };
+  });
+
+  // IDH null → "Sem IDH"
+  df = df.map(row => ({ ...row, "IDH (PartNumber)": row["IDH (PartNumber)"] || "Sem IDH" }));
+
+  // SupplierType
+  df = df.map(row => {
+    const f = String(row["Fornecedor"] || '');
+    let st = "Third Party";
+    if (!f || f === 'null') st = "Null";
+    else if (f.includes("Henkel") || f.includes("PAY")) st = "Intercompany";
+    return { ...row, SupplierType: st };
+  });
+
+  // Order columns
+  const cols = ["Doc. Compra (PO)","Item","Txt. Breve","IDH (PartNumber)","Filial","Quantidade Original","Quantidade","UM pedido","Incoterms","Prontidão Atual","Fornecedor","País","Delivery (DN) Atual","Delivery Estimate","Valor Total","Moeda FOB","Planner","CNPJ","Criação PO","Batch","Mat.doc - Link","GI Date Atual","GR End","DN Real","GI Real","GR Real","Via de Transporte","SupplierType"];
+  df = df.map(row => {
+    const r = {};
+    cols.forEach(c => { r[c] = c in row ? row[c] : null; });
+    return r;
+  });
+
+  // Supplier lookup from raw preship for nulls
+  const supplierByPO = {}, paisByPO = {};
+  preshRaw.forEach(row => {
+    const po = String(row["A~Pur. Doc."] || '').trim();
+    if (!supplierByPO[po] && row["C~Suppl.Vndr"]) {
+      supplierByPO[po] = `${row["C~Suppl.Vndr"]} - ${row["E~Name"] || ''}`;
+    }
+    if (!paisByPO[po] && row["E~Country"]) paisByPO[po] = row["E~Country"];
+  });
+
+  df = df.map(row => {
+    const r = {...row};
+    const po = String(r["Doc. Compra (PO)"] || '');
+    if (!r["Fornecedor"] || r["Fornecedor"] === 'null') r["Fornecedor"] = supplierByPO[po] || null;
+    if (!r["País"] || r["País"] === 'null') r["País"] = paisByPO[po] || null;
+    return r;
+  });
+
+  // 00PAY → Intercompany
+  df = df.map(row => {
+    if (row["Fornecedor"] && String(row["Fornecedor"]).startsWith('00PAY')) {
+      return { ...row, SupplierType: 'Intercompany' };
+    }
+    return row;
+  });
+
+  // Remove: País AR,CO,MX,CN,CL
+  const pRemove = ['AR','CO','MX','CN','CL'];
+  df = df.filter(row => !pRemove.includes(String(row["País"] || '').trim()));
+
+  // Remove US + Third Party
+  df = df.filter(row => !(row["País"] === 'US' && row["SupplierType"] === 'Third Party'));
+
+  addLog('ok', `[MERGE] Mesclagem concluída. ${df.length} linhas.`);
+  return df;
+}
+
+// ============================================================
+// STEP 4: ENRICH WITH VTTP
+// ============================================================
+function enrichWithVttp(df, vttps) {
+  addLog('info', '[VTTP] Enriquecendo com dados de Shipment…');
+  const shipMap = {}, onMap = {};
+  vttps.forEach(row => {
+    const del = String(row["Delivery"] || '').trim();
+    if (del) {
+      if (row["Shipment"]) shipMap[del] = row["Shipment"];
+      if (row["On"]) onMap[del] = row["On"];
+    }
+  });
+
+  const result = df.map(row => {
+    const dn = String(row["Delivery (DN) Atual"] || '').trim();
+    return {
+      ...row,
+      Shipment: shipMap[dn] || null,
+      "Shipment (data)": onMap[dn] ? fmtDate(onMap[dn]) : null
+    };
+  });
+  addLog('ok', `[VTTP] Enriquecimento concluído.`);
+  return result;
+}
+
+// ============================================================
+// STEP 5: FINAL CLEANUP (BLOCO 08 + 09)
+// ============================================================
+function finalCleanup(df, preshData, preshRaw, ekbeRaw) {
+  addLog('info', '[FINAL] Aplicando ajustes finais…');
+
+  // Merge duplicate cols
+  function mergeDupCols(arr, baseName) {
+    if (!arr.length) return arr;
+    const keys = Object.keys(arr[0]).filter(k => k.includes(baseName));
+    if (keys.length <= 1) return arr;
+    return arr.map(row => {
+      const r = {...row};
+      const val = r[keys[0]] || r[keys[1]] || null;
+      r[baseName] = val;
+      keys.forEach(k => { if (k !== baseName) delete r[k]; });
+      return r;
+    });
+  }
+
+  df = mergeDupCols(df, 'Quantidade Original');
+  df = mergeDupCols(df, 'Prontidão Atual');
+
+  // Format Prontidão Atual as date
+  df = df.map(row => ({ ...row, "Prontidão Atual": fmtDate(row["Prontidão Atual"]) }));
+
+  // Remove suffix cols
+  df = df.map(row => {
+    const r = {...row};
+    Object.keys(r).forEach(k => { if (k.endsWith('_EKBE') || k.endsWith('_Preshipment')) delete r[k]; });
+    return r;
+  });
+
+  // IDH lookup for "Sem IDH"
+  const idhByPO = {};
+  preshRaw.forEach(row => {
+    const po = String(row["A~Pur. Doc."] || '').trim();
+    if (!idhByPO[po] && row["A~Material"]) idhByPO[po] = row["A~Material"];
+  });
+  df = df.map(row => {
+    if (row["IDH (PartNumber)"] === "Sem IDH") {
+      const po = String(row["Doc. Compra (PO)"] || '').trim();
+      return { ...row, "IDH (PartNumber)": idhByPO[po] || "Sem IDH" };
+    }
+    return row;
+  });
+
+  // Drop columns by index 6 and 11 (Quantidade Original, Moeda FOB)
+  // This refers to positions in the ordered columns list
+  // Per notebook: coluna G (idx6) = Quantidade, coluna L (idx11) = Moeda FOB
+  // We keep these but handle mat.doc link
+  const orderedCols = ["Doc. Compra (PO)","Item","Txt. Breve","IDH (PartNumber)","Filial","Quantidade Original","Quantidade","UM pedido","Incoterms","Prontidão Atual","Fornecedor","País","Delivery (DN) Atual","Delivery Estimate","Valor Total","Moeda FOB","Planner","CNPJ","Criação PO","Batch","Mat.doc - Link","GI Date Atual","GR End","DN Real","GI Real","GR Real","Via de Transporte","SupplierType","Shipment","Shipment (data)"];
+
+  // Update Mat.doc - Link
+  df = df.map(row => {
+    let link = row["Mat.doc - Link"];
+    if (!link || link === 'null') {
+      const po  = String(row["Doc. Compra (PO)"] || '');
+      const qty = fmtQtyLink(row["Quantidade"]);
+      link = `${po}-1-${qty}`;
+    }
+    return { ...row, "Mat.doc": link };
+  });
+
+  // Remove Quantidade == 0
+  df = df.filter(row => { const q = toNum(row["Quantidade"]); return q !== null && q !== 0; });
+
+  // Valor Total 0/null → 1000
+  df = df.map(row => {
+    const vt = toNum(row["Valor Total"]);
+    return { ...row, "Valor Total": (!vt || vt === 0) ? 1000 : vt };
+  });
+
+  // PO Cancelado? from PreshipmentV2 raw (A~Delet.ind. == 'L')
+  const canceledPOs = new Set();
+  preshRaw.forEach(row => {
+    if (String(row["A~Delet.ind."] || '').trim() === 'L') {
+      canceledPOs.add(String(row["A~Pur. Doc."] || '').trim());
+    }
+  });
+  df = df.map(row => {
+    const po = String(row["Doc. Compra (PO)"] || '').trim();
+    return { ...row, "PO Cancelado ?": canceledPOs.has(po) ? "Sim" : null };
+  });
+
+  // Quantidade Original: max between current and max from preship treated
+  // Build lookup from preshData
+  const maxQtyByPO = {};
+  preshData.forEach(row => {
+    const po = String(row["Doc. Compra (PO)"] || '').trim();
+    const q  = toNum(row["Quantidade Original"]);
+    if (q !== null) { if (maxQtyByPO[po] === undefined || q > maxQtyByPO[po]) maxQtyByPO[po] = q; }
+  });
+  df = df.map(row => {
+    const po = String(row["Doc. Compra (PO)"] || '').trim();
+    const cur = toNum(row["Quantidade Original"]);
+    const mx  = maxQtyByPO[po];
+    if (mx !== undefined) {
+      const best = (cur !== null) ? Math.max(cur, mx) : mx;
+      return { ...row, "Quantidade Original": best };
+    }
+    return row;
+  });
+
+  // Final column order
+  const finalCols = ["Doc. Compra (PO)","Item","Txt. Breve","IDH (PartNumber)","Filial","Quantidade Original","Quantidade","UM pedido","Incoterms","Prontidão Atual","Fornecedor","País","Delivery (DN) Atual","Delivery Estimate","Valor Total","Moeda FOB","Planner","CNPJ","Criação PO","Batch","Mat.doc","GI Date Atual","GR End","DN Real","GI Real","GR Real","Via de Transporte","SupplierType","Shipment","Shipment (data)","PO Cancelado ?"];
+
+  df = df.map(row => {
+    const r = {};
+    finalCols.forEach(c => { r[c] = (c in row) ? row[c] : null; });
+    return r;
+  });
+
+  addLog('ok', `[FINAL] Ajustes concluídos. ${df.length} linhas finais.`);
+  return df;
+}
+
+// ============================================================
+// EXPORT TO XLSX
+// ============================================================
+function toWorkbook(data) {
+  const ws = XLSX.utils.json_to_sheet(data);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Dados');
+  return wb;
+}
+
+function downloadWb(wb, filename) {
+  XLSX.writeFile(wb, filename);
+}
+
+// ============================================================
+// MAIN RUN
+// ============================================================
+async function runAll() {
+  // UI setup
+  document.getElementById('btn-run').disabled = true;
+  document.getElementById('btn-icon').innerHTML = '<div class="spinner"></div>';
+  document.getElementById('btn-label').textContent = 'Processando…';
+  document.getElementById('progress-section').classList.add('visible');
+  document.getElementById('results-section').classList.remove('visible');
+
+  const opts = {
+    filtrarPaises: document.getElementById('opt-filtrar-paises').checked,
+    filtrarQtd:    document.getElementById('opt-filtrar-qtd').checked,
+    gerarAuditoria: document.getElementById('opt-auditoria').checked
+  };
+
+  await sleep(100);
+
+  try {
+    // Step 1: Preshipment
+    setStep('step-preship', 'active'); setProgress(5);
+    await sleep(80);
+    const { df: preshTreated, audit: preshAudit } = processPreshipment(state.preship, opts);
+    setStep('step-preship', 'done'); setProgress(20);
+    await sleep(80);
+
+    // Step 2: EKBE
+    setStep('step-ekbe', 'active'); setProgress(22);
+    await sleep(80);
+    const ekbeTreated = processEkbe(state.ekbe);
+    setStep('step-ekbe', 'done'); setProgress(45);
+    await sleep(80);
+
+    // Step 3: Merge
+    setStep('step-merge', 'active'); setProgress(47);
+    await sleep(80);
+    const merged = mergeEkbePreship(ekbeTreated, preshTreated, state.preship);
+    setStep('step-merge', 'done'); setProgress(65);
+    await sleep(80);
+
+    // Step 4: VTTP
+    setStep('step-vttp', 'active'); setProgress(67);
+    await sleep(80);
+    const withShip = enrichWithVttp(merged, state.vttp);
+    setStep('step-vttp', 'done'); setProgress(78);
+    await sleep(80);
+
+    // Step 5: Final
+    setStep('step-final', 'active'); setProgress(80);
+    await sleep(80);
+    const final = finalCleanup(withShip, preshTreated, state.preship, state.ekbe);
+    setStep('step-final', 'done'); setProgress(90);
+    await sleep(80);
+
+    // Step 6: Export
+    setStep('step-export', 'active'); setProgress(92);
+    await sleep(80);
+
+    state.results = {
+      ekbeTratado: final,
+      preshTratado: preshTreated,
+      preshAudit: preshAudit
+    };
+
+    setStep('step-export', 'done'); setProgress(100);
+    await sleep(200);
+
+    // Show results
+    showResults(final, preshTreated, preshAudit);
+
+  } catch(err) {
+    addLog('err', '[ERRO] ' + err.message + '\n' + err.stack);
+    // Mark active step as error
+    ['step-preship','step-ekbe','step-merge','step-vttp','step-final','step-export'].forEach(id => {
+      if (document.getElementById(id).classList.contains('active')) setStep(id, 'error');
+    });
+    alert('Erro durante o processamento:\n' + err.message + '\n\nVerifique o log para mais detalhes.');
+  }
+
+  document.getElementById('btn-run').disabled = false;
+  document.getElementById('btn-icon').textContent = '▶';
+  document.getElementById('btn-label').textContent = 'Reprocessar';
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ============================================================
+// SHOW RESULTS
+// ============================================================
+function showResults(final, preshTreated, audit) {
+  const sec = document.getElementById('results-section');
+  sec.classList.add('visible');
+
+  // Stats
+  const stats = [
+    { label: 'Linhas EKBE Final', value: final.length.toLocaleString('pt-BR') },
+    { label: 'Linhas Preshipment Tratado', value: preshTreated.length.toLocaleString('pt-BR') },
+    { label: 'POs únicas (EKBE)', value: new Set(final.map(r => r["Doc. Compra (PO)"])).size.toLocaleString('pt-BR') },
+    { label: 'Com Shipment Vinculado', value: final.filter(r => r["Shipment"]).length.toLocaleString('pt-BR') }
+  ];
+
+  document.getElementById('results-stats').innerHTML = stats.map(s =>
+    `<div class="stat-card"><div class="stat-label">${s.label}</div><div class="stat-value">${s.value}</div></div>`
+  ).join('');
+
+  // Downloads
+  const downloads = [
+    { key: 'ekbe', icon: '📊', label: 'EKBE Tratado.xlsx', desc: 'Arquivo final completo com merge', data: final },
+    { key: 'preship', icon: '📋', label: 'PreshipmentV2 Tratado.xlsx', desc: 'Preshipment filtrado e tratado', data: preshTreated },
+  ];
+  if (audit) {
+    downloads.push({ key: 'audit', icon: '🔍', label: 'Audit_Preshipment_Tratado.xlsx', desc: 'Auditoria de exclusões (entrada/excluídos/filtrados)', data: audit });
+  }
+
+  document.getElementById('download-grid').innerHTML = downloads.map(d =>
+    `<button class="download-btn" onclick="downloadFile('${d.key}', '${d.label}')">
+      <div class="dl-icon">${d.icon}</div>
+      <div class="dl-info">
+        <strong>${d.label}</strong>
+        <small>${d.desc}</small>
+      </div>
+    </button>`
+  ).join('');
+
+  // Store for download
+  window._downloadData = {
+    ekbe: final,
+    preship: preshTreated,
+    audit: audit
+  };
+}
+
+function downloadFile(key, filename) {
+  const data = window._downloadData[key];
+  if (!data || !data.length) { alert('Dados não disponíveis para download.'); return; }
+
+  if (key === 'audit') {
+    // Multi-sheet audit
+    const wb = XLSX.utils.book_new();
+    const ws1 = XLSX.utils.json_to_sheet(data);
+    XLSX.utils.book_append_sheet(wb, ws1, 'Entrada');
+    XLSX.writeFile(wb, filename);
+  } else {
+    const wb = toWorkbook(data);
+    downloadWb(wb, filename);
+  }
+  addLog('ok', `[DOWNLOAD] "${filename}" gerado e baixado.`);
+}
+</script>
+</body>
+</html>
