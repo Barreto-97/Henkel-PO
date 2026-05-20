@@ -1163,31 +1163,14 @@ function processEkbe(raw) {
     "Criação PO": parseDate(row["Criação PO"])
   }));
 
-  // ── Mapas de datas reais ─────────────────────────────────────────────────
-  //
-  // DN Real → Hist. Cat. "L"
-  //   Chave de indexação : PO | Mat.Doc.
-  //   Chave de lookup    : PO | Mat.Doc.   (mesmo documento)
-  //
-  // GI Real → Hist. Cat. "WA" ou Movmt type "601"
-  //   Chave de indexação : PO | Reference
-  //   Chave de lookup    : PO | Mat.Doc.
-  //   Motivo: no SAP, quando o GI é lançado, o Mat.Doc. original vai para
-  //   o campo Reference na linha de saída — por isso buscamos o Mat.Doc.
-  //   da linha atual dentro do Reference das linhas de movimento WA/601.
-  //
-  // GR Real → Hist. Cat. "E"
-  //   Chave de indexação : PO | Batch
-  //   Chave de lookup    : PO | Batch
-  //   Motivo: o Batch é o identificador físico do lote; evita espelhar a
-  //   data de recebimento de um lote em outro ainda não recebido.
-
+// ── Mapas de datas reais ─────────────────────────────────────────────────
   const dnMap = {}, giMap = {}, grMap = {};
+  const batchBridge = {}; // Ponte para conectar o Batch da saída (GI) com a remessa (DN)
 
   df.forEach(row => {
     const po  = String(row["Doc. Compra (PO)"] || '').trim();
-    const cat = String(row["Hist. Cat."]        || '').trim();
-    const mv  = String(row["Movmt type"]        || '').trim();
+    const cat = String(row["Hist. Cat."]       || '').trim();
+    const mv  = String(row["Movmt type"]       || '').trim();
     const d   = row["Pstng Date"];
     if (!d) return;
 
@@ -1199,11 +1182,18 @@ function processEkbe(raw) {
     }
 
     // GI Real: indexado por PO | Reference
-    //   (o Mat.Doc. da linha de entrada aparece como Reference na saída WA/601)
     const ref = String(row["Reference"] || '').trim();
-    if ((cat === 'WA' || mv === '601') && ref) {
+    
+    // CORREÇÃO 1: Incluído 'U' e '643' para capturar fluxos Intercompany/STO
+    if ((cat === 'WA' || mv === '601' || cat === 'U' || mv === '643') && ref) {
       const k = `${po}|${ref}`;
       if (!giMap[k] || d < giMap[k]) giMap[k] = d;
+
+      // CORREÇÃO 2: Salvar o Batch que está na linha de GI vinculado à DN (Reference)
+      const batchGI = String(row["Batch"] || '').trim();
+      if (batchGI && !batchBridge[k]) {
+        batchBridge[k] = batchGI;
+      }
     }
 
     // GR Real: indexado por PO | Batch
@@ -1217,20 +1207,25 @@ function processEkbe(raw) {
   df = df.map(row => {
     const po     = String(row["Doc. Compra (PO)"] || '').trim();
     const matDoc = String(row["Mat. Doc."]         || '').trim();
-    const batch  = String(row["Batch"]             || '').trim();
+    let batch    = String(row["Batch"]             || '').trim();
 
-    // DN Real : lookup PO | Mat.Doc.
     const kDN = `${po}|${matDoc}`;
-    // GI Real : lookup PO | Mat.Doc.  →  bate no giMap indexado por PO | Reference
     const kGI = `${po}|${matDoc}`;
-    // GR Real : lookup PO | Batch
+
+    // CORREÇÃO 3: O resgate do Batch
+    // Se a linha atual for a DN (L) e estiver sem Batch, pegamos o Batch da ponte
+    if (!batch && batchBridge[kGI]) {
+      batch = batchBridge[kGI];
+    }
+
     const kGR = `${po}|${batch}`;
 
     return {
       ...row,
       "DN Real": dnMap[kDN] ? fmtDate(dnMap[kDN]) : null,
       "GI Real": giMap[kGI] ? fmtDate(giMap[kGI]) : null,
-      "GR Real": grMap[kGR] ? fmtDate(grMap[kGR]) : null
+      "GR Real": grMap[kGR] ? fmtDate(grMap[kGR]) : null,
+      "Batch": batch || row["Batch"] // Preenche a coluna Batch na base final
     };
   });
 
