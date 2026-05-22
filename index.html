@@ -956,8 +956,21 @@ function fmtDate(val) {
 }
 
 function toNum(x) {
+  // Números nativos do xlsx (float/int) retornam diretamente — sem reprocessar
+  // evita que 3234.0 seja tratado como "3.234" (ponto = milhar)
   if (x === null || x === undefined || x === '') return null;
-  const s = String(x).trim().replace(/\./g,'').replace(',','.');
+  if (typeof x === 'number') return x;
+  let s = String(x).trim();
+  if (s === '') return null;
+  // Formato SAP europeu: termina em exatamente ".000" (ex: "16.000", "7,040.000")
+  if (/\.000$/.test(s)) {
+    s = s.slice(0, -4);           // remove sufixo ".000"
+    s = s.replace(/[,\.]/g, ''); // remove separadores restantes
+    const n = parseInt(s, 10);
+    return isNaN(n) ? null : n;
+  }
+  // String numérica comum: remove vírgulas (milhar), ponto = decimal
+  s = s.replace(/,/g, '');
   const n = parseFloat(s);
   return isNaN(n) ? null : n;
 }
@@ -969,6 +982,14 @@ function fmtQtyLink(x) {
     if (Number.isInteger(f)) return String(f);
     return String(f).replace('.', ',');
   } catch { return String(x).replace('.', ','); }
+}
+
+// Formata quantidade no padrão pt-BR com 3 casas decimais: 1.000,000
+function fmtQtyBR(x) {
+  const n = toNum(x);
+  if (n === null || n === undefined) return '';
+  // Formata com 3 casas decimais e separadores pt-BR
+  return n.toLocaleString('pt-BR', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
 }
 
 function deepCopy(arr) { return JSON.parse(JSON.stringify(arr)); }
@@ -1251,7 +1272,7 @@ function processEkbe(raw) {
     let saldo = totalEQty;
     [...uLines].sort((a, b) => a.qty - b.qty).forEach(u => {
       if (saldo >= u.qty) {
-        grByDN[`${po}|${dn}|${u.qty}`] = minDate;
+        grByDN[`${po}|${dn}|${Math.round(u.qty * 1000)}`] = minDate;
         saldo -= u.qty;
       }
     });
@@ -1359,7 +1380,7 @@ function processEkbe(raw) {
     const qty = toNum(row['Quantidade']) || 0;
 
     const kDN = `${po}|${dn}`;        // DN Real e GI Real
-    const kGR = `${po}|${dn}|${qty}`;  // GR Real: inclui Qty para distinguir linhas com mesmo DN
+    const kGR = `${po}|${dn}|${Math.round(qty * 1000)}`;  // GR Real: inclui Qty normalizada (×1000 evita float mismatch)
 
     return {
       ...row,
@@ -1694,10 +1715,49 @@ function finalCleanup(df, preshData, preshRaw, ekbeRaw) {
 // ============================================================
 // EXPORT TO XLSX
 // ============================================================
+// Constrói o workbook do EKBE Tratado com duas abas:
+//   Aba 1 — "Dados"           : output completo com colunas F e G formatadas pt-BR
+//   Aba 2 — "GR Pendente"     : linhas onde Batch encontrou correspondência
+//                               mas GR Real ficou em branco (com coluna Status)
 function toWorkbook(data) {
-  const ws = XLSX.utils.json_to_sheet(data);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Dados');
+  // ── Formatar F (Quantidade Original) e G (Quantidade) em pt-BR ──────────
+  const dadosFormatados = data.map(row => ({
+    ...row,
+    'Quantidade Original': fmtQtyBR(row['Quantidade Original']),
+    'Quantidade':          fmtQtyBR(row['Quantidade'])
+  }));
+
+  // ── Aba 2: GR Pendente ───────────────────────────────────────────────────
+  // Linhas onde o Batch bateu (campo Batch preenchido) mas GR Real ficou vazio
+  // Colunas: A, B, D, F, G, M, T, Y, R + Status
+  const COLS_PENDENTE = [
+    'Doc. Compra (PO)',    // A
+    'Item',               // B
+    'IDH (PartNumber)',    // D
+    'Quantidade Original', // F
+    'Quantidade',          // G
+    'Delivery (DN) Atual', // M
+    'Batch',              // T
+    'GI Real',            // Y
+    'CNPJ',               // R
+    'Status GR'
+  ];
+
+  const grPendente = dadosFormatados
+    .filter(row => row['Batch'] && row['Batch'] !== '' && !row['GR Real'])
+    .map(row => {
+      const r = {};
+      COLS_PENDENTE.forEach(c => { r[c] = c in row ? row[c] : null; });
+      r['Status GR'] = 'Batch localizado — GR não registrado no período';
+      return r;
+    });
+
+  // ── Montar workbook ──────────────────────────────────────────────────────
+  const wb  = XLSX.utils.book_new();
+  const ws1 = XLSX.utils.json_to_sheet(dadosFormatados);
+  const ws2 = XLSX.utils.json_to_sheet(grPendente.length > 0 ? grPendente : [{ 'Status GR': 'Nenhuma pendência encontrada' }]);
+  XLSX.utils.book_append_sheet(wb, ws1, 'Dados');
+  XLSX.utils.book_append_sheet(wb, ws2, 'GR Pendente');
   return wb;
 }
 
@@ -1804,7 +1864,8 @@ function showResults(final, preshTreated, audit) {
     { label: 'Linhas EKBE Final', value: final.length.toLocaleString('pt-BR') },
     { label: 'Linhas Preshipment Tratado', value: preshTreated.length.toLocaleString('pt-BR') },
     { label: 'POs únicas (EKBE)', value: new Set(final.map(r => r["Doc. Compra (PO)"])).size.toLocaleString('pt-BR') },
-    { label: 'Com Shipment Vinculado', value: final.filter(r => r["Shipment"]).length.toLocaleString('pt-BR') }
+    { label: 'Com Shipment Vinculado', value: final.filter(r => r["Shipment"]).length.toLocaleString('pt-BR') },
+    { label: 'GR Pendente (Batch sem baixa)', value: final.filter(r => r['Batch'] && r['Batch'] !== '' && !r['GR Real']).length.toLocaleString('pt-BR') }
   ];
 
   document.getElementById('results-stats').innerHTML = stats.map(s =>
@@ -1813,7 +1874,7 @@ function showResults(final, preshTreated, audit) {
 
   // Downloads
   const downloads = [
-    { key: 'ekbe', icon: '📊', label: 'EKBE Tratado.xlsx', desc: 'Arquivo final completo com merge', data: final },
+    { key: 'ekbe', icon: '📊', label: 'EKBE Tratado.xlsx', desc: 'Arquivo final · Aba "Dados" + Aba "GR Pendente"', data: final },
     { key: 'preship', icon: '📋', label: 'PreshipmentV2 Tratado.xlsx', desc: 'Preshipment filtrado e tratado', data: preshTreated },
   ];
   if (audit) {
