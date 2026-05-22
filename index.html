@@ -1140,200 +1140,260 @@ function processPreshipment(raw, opts) {
 // ============================================================
 // STEP 2: PROCESS EKBE
 // ============================================================
+// ARQUITETURA: dois passos separados.
+// PASSO 1 — todos os mapas construídos sobre o raw COMPLETO antes de
+//           qualquer filtro, rename ou remoção de colunas.
+// PASSO 2 — transformações, filtros e atribuição das datas.
+//
+// CHAVES DOS MAPAS (descobertas via análise forense do SAP):
+//
+//  DN Real  → Hist.Cat. L,  indexado e lookado por PO|Mat.Doc.
+//
+//  GI Real  → Hist.Cat. U / Movmt 643,
+//             indexado por PO|Reference (o Mat.Doc. da linha L vai para Reference na U)
+//             lookup: PO|Mat.Doc. da linha L
+//
+//  GR Real  → Hist.Cat. E,
+//             cadeia: E.Batch → grDate[Batch] = data
+//                     U.Reference (=DN) + U.Batch → grByDN[DN] = data
+//                     mas APENAS se sum(E.Qty do Batch) >= U.Qty do DN,
+//                     para não marcar GR em DNs cuja quantidade ainda não foi recebida.
+//
+//  Quantidade Original → soma das Qty das linhas L (Mat.Doc. starts '9', Qty > 0) por PO.
+//                        NÃO usar max de todas as linhas pois Cat=Q (invoice) contamina.
+// ============================================================
 function processEkbe(raw) {
   addLog('info', '[EKBE] Iniciando tratamento EKBE…');
+
+  // ── PASSO 1: Mapas construídos sobre o raw original ───────────────────
+  const dnMap   = {};   // PO|DN   → min Pstng Date (Cat=L)
+  const giMap   = {};   // PO|Ref  → min Pstng Date (Cat=U/643) — lookup via PO|DN
+  const grDate  = {};   // PO|Batch → { date, totalQty } (Cat=E)
+  const uByDN   = {};   // PO|DN   → [{ batch, qty }]  (Cat=U) — ponte E→L
+  const qtyOrig = {};   // PO      → soma Qty linhas L com Qty>0
+
+  raw.forEach(row => {
+    const po     = String(row['Pur. Doc.']   || row['Doc. Compra (PO)'] || '').trim();
+    const cat    = String(row['Hist. Cat.']  || '').trim();
+    const mv     = String(row['Movmt Type']  || row['Movmt type'] || '').trim();
+    const d      = parseDate(row['Pstng Date']);
+    const matDoc = String(row['Mat. Doc.']   || '').trim();
+    const ref    = String(row['Reference']   || '').trim();
+    const qty    = toNum(row['Quantity']     || row['Quantidade'] || 0) || 0;
+    const batch  = String(row['Batch']       || '').trim();
+    if (!po) return;
+
+    // DN Real: linha L com Mat.Doc. começando em '9'
+    if (cat === 'L' && matDoc.startsWith('9')) {
+      if (d) {
+        const k = `${po}|${matDoc}`;
+        if (!dnMap[k] || d < dnMap[k]) dnMap[k] = d;
+      }
+      // Quantidade Original: soma das linhas L válidas por PO
+      if (qty > 0) qtyOrig[po] = (qtyOrig[po] || 0) + qty;
+    }
+
+    // GI Real: linha U/643, indexada por PO|Reference
+    if ((cat === 'U' || mv === '643') && ref && d) {
+      const k = `${po}|${ref}`;
+      if (!giMap[k] || d < giMap[k]) giMap[k] = d;
+    }
+
+    // GR Real passo 1: linha E → grDate[PO|batchKey]
+    // batchKey = batch a partir do 2º caractere (ignora prefixo de lote do SAP)
+    if (cat === 'E' && batch && d) {
+      const bk = batch.length > 1 ? batch.slice(1) : batch;
+      const k  = `${po}|${bk}`;
+      if (!grDate[k]) grDate[k] = { date: d, totalQty: 0 };
+      if (d < grDate[k].date) grDate[k].date = d;
+      grDate[k].totalQty += qty;
+    }
+
+    // GR Real passo 2: linha U → registra batchKey+Qty por DN (Reference)
+    if ((cat === 'U' || mv === '643') && ref && batch) {
+      const bk = batch.length > 1 ? batch.slice(1) : batch;
+      const k  = `${po}|${ref}`;
+      if (!uByDN[k]) uByDN[k] = [];
+      uByDN[k].push({ batchKey: bk, qty });
+    }
+  });
+
+  // GR Real: montar grByDN cruzando uByDN com grDate
+  //
+  // Regras (validadas contra dados reais do SAP):
+  // 1. Chave do Batch ignora o 1º caractere em ambos os lados (prefixo de lote)
+  // 2. Para cada DN, soma-se o totalQty de TODOS os Batches distintos do DN (pool do DN)
+  // 3. As linhas são ordenadas por Qty crescente e o saldo é consumido progressivamente
+  //    → Ex: pool=72, linhas 50+22+132 → 50 ✓ (saldo 22), 22 ✓ (saldo 0), 132 ✗
+  //    → Ex: pool=72, linhas 72+132   → 72 ✓ (saldo 0),  132 ✗
+  // 4. Chave de lookup no output: PO|DN|Qty (distingue linhas com mesmo DN e Qtys diferentes)
+
+  const grByDN = {};  // "PO|DN|Qty" → date
+  Object.entries(uByDN).forEach(([key, uLines]) => {
+    const [po, dn] = key.split('|');
+
+    // Pool: soma E.Qty de todos os Batches distintos que compõem este DN
+    const batchesSeen = new Set();
+    let totalEQty = 0;
+    let minDate   = null;
+    uLines.forEach(u => {
+      const sk = `${po}|${u.batchKey}`;
+      if (!batchesSeen.has(u.batchKey) && grDate[sk]) {
+        batchesSeen.add(u.batchKey);
+        totalEQty += grDate[sk].totalQty;
+        if (!minDate || grDate[sk].date < minDate) minDate = grDate[sk].date;
+      }
+    });
+
+    if (totalEQty === 0 || !minDate) return;  // nenhuma linha E para este DN
+
+    // Distribui o saldo pelas linhas, do menor para o maior Qty
+    let saldo = totalEQty;
+    [...uLines].sort((a, b) => a.qty - b.qty).forEach(u => {
+      if (saldo >= u.qty) {
+        grByDN[`${po}|${dn}|${u.qty}`] = minDate;
+        saldo -= u.qty;
+      }
+    });
+  });
+
+  addLog('info', `[EKBE] Mapas prontos — DN:${Object.keys(dnMap).length} GI:${Object.keys(giMap).length} GR:${Object.keys(grByDN).length} chaves.`);
+
+  // ── PASSO 2: Processar df (renomes, enriquecimentos, filtros) ──────────
   let df = deepCopy(raw);
 
   // Renomear colunas
   df = df.map(row => {
     const r = { ...row };
-    if ("Quantity" in r) { r["Quantidade"] = r["Quantity"]; delete r["Quantity"]; }
-    if ("Pur. Doc." in r) { r["Doc. Compra (PO)"] = r["Pur. Doc."]; delete r["Pur. Doc."]; }
-    if ("Material" in r) { r["Material_Original"] = r["Material"]; delete r["Material"]; }
-    if ("Doc. Date" in r) { r["Criação PO"] = r["Doc. Date"]; delete r["Doc. Date"]; }
-    if ("Item.1" in r) { r["Item2"] = r["Item.1"]; delete r["Item.1"]; }
+    if ('Quantity'  in r) { r['Quantidade']        = r['Quantity'];  delete r['Quantity'];  }
+    if ('Pur. Doc.' in r) { r['Doc. Compra (PO)']  = r['Pur. Doc.']; delete r['Pur. Doc.']; }
+    if ('Material'  in r) { r['Material_Original']  = r['Material'];  delete r['Material'];  }
+    if ('Doc. Date' in r) { r['Criação PO']         = r['Doc. Date']; delete r['Doc. Date']; }
+    if ('Item.1'    in r) { r['Item2']              = r['Item.1'];    delete r['Item.1'];    }
+    if ('Movmt Type' in r){ r['Movmt type']         = r['Movmt Type']; delete r['Movmt Type']; }
     return r;
   });
 
   // Converter datas
   df = df.map(row => ({
     ...row,
-    "Pstng Date": parseDate(row["Pstng Date"]),
-    "Entered": parseDate(row["Entered"]),
-    "Criação PO": parseDate(row["Criação PO"])
+    'Pstng Date': parseDate(row['Pstng Date']),
+    'Entered':    parseDate(row['Entered']),
+    'Criação PO': parseDate(row['Criação PO'])
   }));
 
-// ── Mapas de datas reais ─────────────────────────────────────────────────
-  const dnMap = {}, giMap = {}, grMap = {};
-  const batchBridge = {}; // Ponte para conectar o Batch da saída (GI) com a remessa (DN)
-
-  df.forEach(row => {
-    const po  = String(row["Doc. Compra (PO)"] || '').trim();
-    const cat = String(row["Hist. Cat."]       || '').trim();
-    const mv  = String(row["Movmt type"]       || '').trim();
-    const d   = row["Pstng Date"];
-    if (!d) return;
-
-    // DN Real: indexado por PO | Mat.Doc.
-    const matDoc = String(row["Mat. Doc."]  || '').trim();
-    if (cat === 'L' && matDoc) {
-      const k = `${po}|${matDoc}`;
-      if (!dnMap[k] || d < dnMap[k]) dnMap[k] = d;
-    }
-
-    // GI Real: indexado por PO | Reference
-    const ref = String(row["Reference"] || '').trim();
-    
-    // CORREÇÃO 1: Incluído 'U' e '643' para capturar fluxos Intercompany/STO
-    if ((cat === 'WA' || mv === '601' || cat === 'U' || mv === '643') && ref) {
-      const k = `${po}|${ref}`;
-      if (!giMap[k] || d < giMap[k]) giMap[k] = d;
-
-      // CORREÇÃO 2: Salvar o Batch que está na linha de GI vinculado à DN (Reference)
-      const batchGI = String(row["Batch"] || '').trim();
-      if (batchGI && !batchBridge[k]) {
-        batchBridge[k] = batchGI;
-      }
-    }
-
-    // GR Real: indexado por PO | Batch
-    const batch = String(row["Batch"] || '').trim();
-    if (cat === 'E' && batch) {
-      const k = `${po}|${batch}`;
-      if (!grMap[k] || d < grMap[k]) grMap[k] = d;
-    }
-  });
-
-  df = df.map(row => {
-    const po     = String(row["Doc. Compra (PO)"] || '').trim();
-    const matDoc = String(row["Mat. Doc."]         || '').trim();
-    let batch    = String(row["Batch"]             || '').trim();
-
-    const kDN = `${po}|${matDoc}`;
-    const kGI = `${po}|${matDoc}`;
-
-    // CORREÇÃO 3: O resgate do Batch
-    // Se a linha atual for a DN (L) e estiver sem Batch, pegamos o Batch da ponte
-    if (!batch && batchBridge[kGI]) {
-      batch = batchBridge[kGI];
-    }
-
-    const kGR = `${po}|${batch}`;
-
-    return {
-      ...row,
-      "DN Real": dnMap[kDN] ? fmtDate(dnMap[kDN]) : null,
-      "GI Real": giMap[kGI] ? fmtDate(giMap[kGI]) : null,
-      "GR Real": grMap[kGR] ? fmtDate(grMap[kGR]) : null,
-      "Batch": batch || row["Batch"] // Preenche a coluna Batch na base final
-    };
-  });
-
-  // Criação PO mínima por PO
+  // Criação PO: mínima por PO
   const minCriacao = {};
   df.forEach(row => {
-    const po = row["Doc. Compra (PO)"];
-    const d = row["Criação PO"];
-    if (d) { if (!minCriacao[po] || d < minCriacao[po]) minCriacao[po] = d; }
+    const po = row['Doc. Compra (PO)'];
+    const d  = row['Criação PO'];
+    if (d && (!minCriacao[po] || d < minCriacao[po])) minCriacao[po] = d;
   });
   df = df.map(row => ({
     ...row,
-    "Criação PO": minCriacao[row["Doc. Compra (PO)"]] ? fmtDate(minCriacao[row["Doc. Compra (PO)"]]) : null
+    'Criação PO': minCriacao[row['Doc. Compra (PO)']] ? fmtDate(minCriacao[row['Doc. Compra (PO)']]) : null
   }));
 
-  // Quantidade Inicial (máx por PO)
-  const maxQty = {};
-  df.forEach(row => {
-    const po = row["Doc. Compra (PO)"];
-    const q = toNum(row["Quantidade"]);
-    if (q !== null) { if (maxQty[po] === undefined || q > maxQty[po]) maxQty[po] = q; }
-  });
-  df = df.map(row => ({ ...row, "Quantidade Inicial": maxQty[row["Doc. Compra (PO)"]] ?? null }));
+  // Quantidade Inicial: usa qtyOrig calculado no PASSO 1 (soma linhas L)
+  df = df.map(row => ({ ...row, 'Quantidade Inicial': qtyOrig[row['Doc. Compra (PO)']] ?? null }));
 
   // IDH por PO
   const idhMap = {};
   df.forEach(row => {
-    const po = row["Doc. Compra (PO)"];
-    if (!idhMap[po] && row["Material_Original"]) idhMap[po] = row["Material_Original"];
+    const po = row['Doc. Compra (PO)'];
+    if (!idhMap[po] && row['Material_Original']) idhMap[po] = row['Material_Original'];
   });
-  df = df.map(row => ({ ...row, "IDH (PartNumber)": idhMap[row["Doc. Compra (PO)"]] || null }));
+  df = df.map(row => ({ ...row, 'IDH (PartNumber)': idhMap[row['Doc. Compra (PO)']] || null }));
 
-  // Batch por PO+Qty+Item2
+  // Batch: propagar por PO+Qty+Item2
   const batchMap = {};
   df.forEach(row => {
-    const k = `${row["Doc. Compra (PO)"]}|${row["Quantidade"]}|${row["Item2"]}`;
-    if (!batchMap[k] && row["Batch"]) batchMap[k] = row["Batch"];
+    const k = `${row['Doc. Compra (PO)']}|${row['Quantidade']}|${row['Item2']}`;
+    if (!batchMap[k] && row['Batch']) batchMap[k] = row['Batch'];
   });
   df = df.map(row => {
-    const k = `${row["Doc. Compra (PO)"]}|${row["Quantidade"]}|${row["Item2"]}`;
-    return { ...row, "Batch": batchMap[k] || row["Batch"] || null };
+    const k = `${row['Doc. Compra (PO)']}|${row['Quantidade']}|${row['Item2']}`;
+    return { ...row, 'Batch': batchMap[k] || row['Batch'] || null };
   });
 
-  df = df.map(row => ({ ...row, PO: row["Doc. Compra (PO)"] }));
+  df = df.map(row => ({ ...row, PO: row['Doc. Compra (PO)'] }));
 
-  // MaxBatch para referência
+  // MaxBatch
   const maxBatch = {};
   df.forEach(row => {
-    const po = row["Doc. Compra (PO)"];
-    const q = toNum(row["Quantidade"]);
-    if (q !== null) { if (maxBatch[po] === undefined || q > maxBatch[po]) maxBatch[po] = q; }
+    const po = row['Doc. Compra (PO)'];
+    const q  = toNum(row['Quantidade']);
+    if (q !== null && (maxBatch[po] === undefined || q > maxBatch[po])) maxBatch[po] = q;
   });
-  df = df.map(row => ({ ...row, MaxBatch: maxBatch[row["Doc. Compra (PO)"]] ?? null }));
+  df = df.map(row => ({ ...row, MaxBatch: maxBatch[row['Doc. Compra (PO)']] ?? null }));
 
   // Filtros
-  df = df.filter(row => {
-    const md = row["Mat. Doc."] ? String(row["Mat. Doc."]).startsWith('9') : false;
-    return md;
-  });
-  df = df.filter(row => { const q = toNum(row["Quantidade"]); return q !== null && q !== 0; });
+  df = df.filter(row => String(row['Mat. Doc.'] || '').startsWith('9'));
+  df = df.filter(row => { const q = toNum(row['Quantidade']); return q !== null && q !== 0; });
 
-  // Remover colunas
-  const rem1 = ["Stk Seg.","Log.System","SU","Comp flag","SeasonYear","Season","Collection","Theme","Quantity18","Char1","Char2","Char3","303-Beleg","303-B.jahr","305-Beleg","305-B.jahr","Rec. plant","Coluna1","Quantity9","Qty. OPUn10","Amount LC11","Amount12","Val.BS OUn","Val. GR BS","Orig. Acc.","GR/IR clr.13","E/R Diff.","Retention","Retention14","Retention15","Retention16","Multi AA","Exch. Rate","Origin","Service","Number","Line","SeqNo.POAA","SRVRet","GR/IR clr.8","FC amount","GR/IR clr.","Reference","GR Bl. OUn","GR blocked","Material_Original","MaxBatch"];
+  // Remover colunas 1
+  const rem1 = ['Stk Seg.','Log.System','SU','Comp flag','SeasonYear','Season','Collection','Theme','Quantity18','Char1','Char2','Char3','303-Beleg','303-B.jahr','305-Beleg','305-B.jahr','Rec. plant','Coluna1','Quantity9','Qty. OPUn10','Amount LC11','Amount12','Val.BS OUn','Val. GR BS','Orig. Acc.','GR/IR clr.13','E/R Diff.','Retention','Retention14','Retention15','Retention16','Multi AA','Exch. Rate','Origin','Service','Number','Line','SeqNo.POAA','SRVRet','GR/IR clr.8','FC amount','GR/IR clr.','Reference','GR Bl. OUn','GR blocked','Material_Original','MaxBatch'];
   df = df.map(row => { const r = {...row}; rem1.forEach(c => delete r[c]); return r; });
 
   // Renomear
   df = df.map(row => {
     const r = {...row};
-    if ("Amount LC" in r) { r["Valor Total"] = r["Amount LC"]; delete r["Amount LC"]; }
-    if ("Mat. Doc." in r) { r["Delivery (DN) Atual"] = r["Mat. Doc."]; delete r["Mat. Doc."]; }
-    if ("Local cur." in r) { r["Moeda FOB"] = r["Local cur."]; delete r["Local cur."]; }
+    if ('Amount LC' in r) { r['Valor Total']         = r['Amount LC'];  delete r['Amount LC'];  }
+    if ('Mat. Doc.' in r) { r['Delivery (DN) Atual'] = r['Mat. Doc.']; delete r['Mat. Doc.']; }
+    if ('Local cur.' in r){ r['Moeda FOB']            = r['Local cur.']; delete r['Local cur.']; }
     return r;
   });
 
   // Delivery (DN) Primeiro
-  df = df.map(row => ({ ...row, "Delivery (DN) Primeiro": row["Delivery (DN) Atual"] }));
+  df = df.map(row => ({ ...row, 'Delivery (DN) Primeiro': row['Delivery (DN) Atual'] }));
 
   // Remover colunas 2
-  const rem2 = ["Created","Release","Item17","GR/IR clr.6","Value open","UAcctAss.","RevGR IR","Seq. No.","Doc.cond.","Tax Code","PO","DN Qty","Del.NoteUn","Material5","Inv. Value","Compliance","Inv. Value4","Plant","Ref. Doc.","Item3","Reason","Entered","Time","Delivery","D/C Indic.","Val. Type","Processed","Qty. OPUn","Amount","Currency","Hist. Cat.","Movmt type","FiscYrRefD","SqNoAccAss","Transact.","Mat. Year","Quantity7"];
+  const rem2 = ['Created','Release','Item17','GR/IR clr.6','Value open','UAcctAss.','RevGR IR','Seq. No.','Doc.cond.','Tax Code','PO','DN Qty','Del.NoteUn','Material5','Inv. Value','Compliance','Inv. Value4','Plant','Ref. Doc.','Item3','Reason','Entered','Time','Delivery','D/C Indic.','Val. Type','Processed','Qty. OPUn','Amount','Currency','Hist. Cat.','Movmt type','FiscYrRefD','SqNoAccAss','Transact.','Mat. Year','Quantity7'];
   df = df.map(row => { const r = {...row}; rem2.forEach(c => delete r[c]); return r; });
 
-  // Reorder
-  const order = ["Doc. Compra (PO)","Item","IDH (PartNumber)","Quantidade Inicial","Quantidade","Delivery (DN) Atual","Delivery (DN) Primeiro","Valor Total","Moeda FOB","Item2","Batch","Criação PO","DN Real","GI Real","GR Real"];
+  // ── PASSO 3: Atribuir datas reais ─────────────────────────────────────
+  // Neste ponto Mat.Doc. já foi renomeado para 'Delivery (DN) Atual'
+  df = df.map(row => {
+    const po  = String(row['Doc. Compra (PO)']   || '').trim();
+    const dn  = String(row['Delivery (DN) Atual'] || '').trim();
+    const qty = toNum(row['Quantidade']) || 0;
+
+    const kDN = `${po}|${dn}`;        // DN Real e GI Real
+    const kGR = `${po}|${dn}|${qty}`;  // GR Real: inclui Qty para distinguir linhas com mesmo DN
+
+    return {
+      ...row,
+      'DN Real': dnMap[kDN]  ? fmtDate(dnMap[kDN])  : null,
+      'GI Real': giMap[kDN]  ? fmtDate(giMap[kDN])  : null,
+      'GR Real': grByDN[kGR] ? fmtDate(grByDN[kGR]) : null
+    };
+  });
+
+  // Reorder colunas
+  const order = ['Doc. Compra (PO)','Item','IDH (PartNumber)','Quantidade Inicial','Quantidade','Delivery (DN) Atual','Delivery (DN) Primeiro','Valor Total','Moeda FOB','Item2','Batch','Criação PO','DN Real','GI Real','GR Real'];
   df = df.map(row => {
     const r = {};
     order.forEach(c => { if (c in row) r[c] = row[c]; });
-    // keep extra cols
     Object.keys(row).forEach(c => { if (!(c in r)) r[c] = row[c]; });
     return r;
   });
 
   // Mat.doc - Link
   df = df.map(row => {
-    const po  = row["Doc. Compra (PO)"] || '';
-    const it  = row["Item"] || '';
-    const qty = fmtQtyLink(row["Quantidade"]);
-    return { ...row, "Mat.doc - Link": `${po}-${it}-${qty}` };
+    const po  = row['Doc. Compra (PO)'] || '';
+    const it  = row['Item'] || '';
+    const qty = fmtQtyLink(row['Quantidade']);
+    return { ...row, 'Mat.doc - Link': `${po}-${it}-${qty}` };
   });
 
-  // Final output
   const ekbeFinal = df.map(row => {
     const r = {};
     order.forEach(c => { if (c in row) r[c] = row[c]; });
-    r["Mat.doc - Link"] = row["Mat.doc - Link"];
+    r['Mat.doc - Link'] = row['Mat.doc - Link'];
     return r;
   });
 
-  addLog('ok', `[EKBE] Tratamento concluído. ${ekbeFinal.length} linhas.`);
+  addLog('ok', `[EKBE] Concluído. ${ekbeFinal.length} linhas finais.`);
   return ekbeFinal;
 }
 
