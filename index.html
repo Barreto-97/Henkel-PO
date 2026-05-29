@@ -1562,11 +1562,17 @@ function mergeEkbePreship(ekbeData, preshData, preshRaw) {
   const pRemove = ['AR','CO','MX','CN','CL'];
   df = df.filter(row => !pRemove.includes(String(row["País"] || '').trim()));
 
-  // Remove US + Third Party
-  df = df.filter(row => !(row["País"] === 'US' && row["SupplierType"] === 'Third Party'));
+// Remove US + Third Party
+  df = df.filter(row => !(row["País"] === 'US' && row["SupplierType"] === 'Third Party'));
 
-  addLog('ok', `[MERGE] Mesclagem concluída. ${df.length} linhas.`);
-  return df;
+  // Manter apenas fornecedores que contenham "Henkel" ou iniciem com "00PA"
+  df = df.filter(row => {
+    const forn = String(row["Fornecedor"] || '').toUpperCase();
+    return forn.includes('HENKEL') || forn.startsWith('00PA');
+  });
+
+  addLog('ok', `[MERGE] Mesclagem concluída. ${df.length} linhas.`);
+  return df;
 }
 
 // ============================================================
