@@ -1708,14 +1708,20 @@ function finalCleanup(df, preshData, preshRaw, ekbeRaw) {
   // Final column order
   const finalCols = ["Doc. Compra (PO)","Item","Txt. Breve","IDH (PartNumber)","Filial","Quantidade Original","Quantidade","UM pedido","Incoterms","Prontidão Atual","Fornecedor","País","Delivery (DN) Atual","Delivery Estimate","Valor Total","Moeda FOB","Planner","CNPJ","Criação PO","Batch","Mat.doc","GI Date Atual","GR End","DN Real","GI Real","GR Real","Via de Transporte","SupplierType","Shipment","Shipment (data)","PO Cancelado ?"];
 
-  df = df.map(row => {
-    const r = {};
-    finalCols.forEach(c => { r[c] = (c in row) ? row[c] : null; });
-    return r;
-  });
+  df = df.map(row => {
+    const r = {};
+    finalCols.forEach(c => { r[c] = (c in row) ? row[c] : null; });
+    
+    // Substitui valores nulos ou vazios por "AEREA"
+    if (!r["Via de Transporte"] || r["Via de Transporte"] === 'null') {
+      r["Via de Transporte"] = "AEREA";
+    }
+    
+    return r;
+  });
 
-  addLog('ok', `[FINAL] Ajustes concluídos. ${df.length} linhas finais.`);
-  return df;
+  addLog('ok', `[FINAL] Ajustes concluídos. ${df.length} linhas finais.`);
+  return df;
 }
 
 // ============================================================
